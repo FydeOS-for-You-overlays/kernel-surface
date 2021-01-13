@@ -1,0 +1,84 @@
+/*
+* Copyright 1998-2014 VIA Technologies, Inc. All Rights Reserved.
+* Copyright 2001-2014 S3 Graphics, Inc. All Rights Reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sub license,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice (including the
+* next paragraph) shall be included in all copies or substantial portions
+* of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. IN NO EVENT SHALL
+* THE AUTHOR(S) OR COPYRIGHT HOLDER(S) BE LIABLE FOR ANY CLAIM, DAMAGES OR
+* OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+* ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
+
+/*****************************************************************************
+** DESCRIPTION:
+** CBios device manager interface prototype.
+**
+** NOTE:
+** The hw dependent function or structure SHOULD NOT be added to this file.
+******************************************************************************/
+
+#ifndef _CBIOS_DEVICE_MANAGER_H_
+#define _CBIOS_DEVICE_MANAGER_H_
+
+#include "CBiosChipShare.h"
+
+CBIOS_STATUS cbDMGetModeTiming(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, PCBIOS_GET_MODE_TIMING_PARAM pGetModeTiming);
+
+CBIOS_STATUS cbDMSetEdid(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, PCBIOS_PARAM_SET_EDID pCBParamSetEdid);
+CBIOS_STATUS cbDMGetEdidFromBuffer(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, PCBIOS_PARAM_GET_EDID pCBParamGetEdid);
+
+CBIOS_STATUS cbDMGetSupportedMonitorType(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, PCBIOS_QUERY_MONITOR_TYPE_PER_PORT pCBiosQueryMonitorTypePerPort);
+CBIOS_STATUS cbDMQueryMonitorAttribute(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, PCBiosMonitorAttribute pMonitorAttribute);
+CBIOS_STATUS cbDMQueryMonitor3DCapability(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, PCBIOS_MONITOR_3D_CAPABILITY_PARA p3DCapability);
+
+CBIOS_STATUS cbDMGetDeviceModeListBufferSize(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, CBIOS_ACTIVE_TYPE Device, CBIOS_U32 *pBufferSize);
+CBIOS_STATUS cbDMGetDeviceModeList(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, CBIOS_ACTIVE_TYPE Device, PCBiosModeInfoExt pModeList, CBIOS_U32 *pBufferSize);
+CBIOS_U32    cbDMDevicesDetectPerPort(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, CBIOS_U32 DevicesToDetect);
+
+CBIOS_STATUS cbDMSetDisplayDevicePowerState(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, CBIOS_ACTIVE_TYPE Devices, CBIOS_PM_STATUS PMState);
+CBIOS_STATUS cbDMGetDisplayDevicePowerState(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, CBIOS_ACTIVE_TYPE Device, PCBIOS_PM_STATUS pPMState);
+
+
+// DP only interfaces
+CBIOS_STATUS cbDMAccessDpcdData(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, PCBiosAccessDpcdDataParams pAccessDpcdDataParams);
+
+// HD audio
+CBIOS_U32    cbDMGetHDAFormatList(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, CBIOS_ACTIVE_TYPE Device, PCBIOS_HDMI_AUDIO_INFO pHDAFormatList);
+CBIOS_STATUS cbDMSetHDACodecPara(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, PCBIOS_HDAC_PARA pCbiosHDACPara);
+CBIOS_STATUS cbDMSetHDACConnectStatus(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, PCBIOS_HDAC_PARA pCbiosHDACPara);
+
+// DSI only interfaces
+CBIOS_STATUS cbDMDSISendWriteCmd(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, CBIOS_ACTIVE_TYPE Device, PCBIOS_DSI_WRITE_PARA_INTERNAL pDSIWriteParams);
+CBIOS_STATUS cbDMDSISendReadCmd(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, CBIOS_ACTIVE_TYPE Device, PCBIOS_DSI_READ_PARA_INTERNAL pDSIReadParams);
+CBIOS_STATUS cbDMDSIDisplayUpdate(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, CBIOS_ACTIVE_TYPE Device, PCBIOS_DSI_UPDATE_PARA pDSIUpdatePara);
+CBIOS_STATUS cbDMDSIPanelSetCabc(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, CBIOS_ACTIVE_TYPE Device, CBIOS_U32 CabcValue);
+CBIOS_STATUS cbDMDSIPanelSetBacklight(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, CBIOS_ACTIVE_TYPE Device, CBIOS_U32 BacklightValue);
+CBIOS_STATUS cbDMDSIPanelGetBacklight(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, CBIOS_ACTIVE_TYPE Device, CBIOS_U32 *pBacklightValue);
+
+CBIOS_STATUS cbDMContentProtectionOnOff(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, PCBiosContentProtectionOnOffParams pContentProtectionOnOffParams);
+CBIOS_STATUS cbDMGetHDCPStatus(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, PCBIOS_HDCP_STATUS_PARA pCBiosHdcpStatusParams);
+CBIOS_STATUS cbDMHDCPWorkThread(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, PCBIOS_HDCP_WORK_PARA pCBiosHdcpWorkParams);
+CBIOS_STATUS cbDMHDCPIsr(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, PCBIOS_HDCP_ISR_PARA pHdcpIsrParam);
+
+CBIOS_STATUS cbDMSyncDataWithUBoot(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, PCBIOS_DISPLAY_MANAGER pDispMgr, PCBIOS_UBOOT_DATA_PARAM pDataParam);
+
+CBIOS_BOOL cbDMHdmiSCDCWorkThreadMainFunc(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr);
+
+CBIOS_STATUS cbDMDPIsr(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, PCBIOS_DP_ISR_PARA pDPIsrPara) ;
+CBIOS_BOOL cbDMDPWorkThreadMainFunc(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, PCBIOS_DP_WORKTHREAD_PARA pDPWorkThreadPara) ;
+CBIOS_STATUS cbDMDPSetNotifications(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, PCBIOS_DP_NOTIFICATIONS pDPNotifications);
+CBIOS_STATUS cbDMDPGetCustomizedTiming(PCBIOS_EXTENSION_COMMON pcbe, PCBIOS_DEVICE_MANAGER pDevMgr, PCBIOS_DP_CUSTOMIZED_TIMING pDPCustomizedTiming);
+#endif
