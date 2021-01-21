@@ -707,6 +707,18 @@ config ACPI_WMI
 	  It is safe to enable this driver even if your DSDT doesn't define
 	  any ACPI-WMI devices.
 
+config SURFACE_HOTPLUG
+	tristate "Surface Hot-Plug System Driver"
+	depends on ACPI
+	default m
+	help
+	  Driver for the Surface discrete GPU (dGPU) hot-plug system.
+
+	  This driver provides support for out-of-band hot-plug event signaling
+	  on Surface Book 2 and 3 devices. This out-of-band signaling is
+	  required to notify the kernel of any hot-plug events when the dGPU is
+	  powered off, i.e. in D3cold.
+
 config WMI_BMOF
 	tristate "WMI embedded Binary MOF driver"
 	depends on ACPI_WMI
@@ -1169,6 +1181,29 @@ config SURFACE_3_BUTTON
 	depends on ACPI && KEYBOARD_GPIO && I2C
 	---help---
 	  This driver handles the power/home/volume buttons on the Microsoft Surface 3 tablet.
+
+config SURFACE_3_POWER_OPREGION
+	tristate "Surface 3 battery platform operation region support"
+	depends on ACPI && I2C
+	help
+	  Select this option to enable support for ACPI operation
+	  region of the Surface 3 battery platform driver.
+
+config SURFACE_GPE
+	tristate "Surface GPE/Lid Driver"
+	depends on ACPI
+	help
+	  This driver marks the GPEs related to the ACPI lid device found on
+	  Microsoft Surface devices as wakeup sources and prepares them
+	  accordingly. It is required on those devices to allow wake-ups from
+	  suspend by opening the lid.
+
+config SURFACE_BOOK1_DGPU_SWITCH
+	tristate "Surface Book 1 dGPU Switch Driver"
+	depends on ACPI && SYSFS
+	help
+	  This driver provides a sysfs switch to set the power-state of the
+	  discrete GPU found on the Microsoft Surface Book 1.
 
 config INTEL_PUNIT_IPC
 	tristate "Intel P-Unit IPC Driver"

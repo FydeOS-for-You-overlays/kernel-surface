@@ -38,7 +38,10 @@
 #include <linux/device.h>
 #include <linux/hid.h>
 #include <linux/module.h>
+#include <linux/pm_runtime.h>
 #include <linux/slab.h>
+#include <linux/suspend.h>
+#include <linux/usb.h>
 #include <linux/input/mt.h>
 #include <linux/jiffies.h>
 #include <linux/string.h>
@@ -51,6 +54,7 @@ MODULE_DESCRIPTION("HID multitouch panels");
 MODULE_LICENSE("GPL");
 
 #include "hid-ids.h"
+#include "usbhid/usbhid.h"
 
 /* quirks to control the device */
 #define MT_QUIRK_NOT_SEEN_MEANS_UP	BIT(0)
@@ -72,11 +76,14 @@ MODULE_LICENSE("GPL");
 #define MT_QUIRK_STICKY_FINGERS		BIT(16)
 #define MT_QUIRK_ASUS_CUSTOM_UP		BIT(17)
 #define MT_QUIRK_WIN8_PTP_BUTTONS	BIT(18)
+#define MT_QUIRK_HAS_TYPE_COVER_BACKLIGHT	BIT(21)
 
 #define MT_INPUTMODE_TOUCHSCREEN	0x02
 #define MT_INPUTMODE_TOUCHPAD		0x03
 
 #define MT_BUTTONTYPE_CLICKPAD		0
+
+#define MS_TYPE_COVER_FEATURE_REPORT_USAGE	0xff050086
 
 enum latency_mode {
 	HID_LATENCY_NORMAL = 0,
@@ -135,6 +142,9 @@ struct mt_application {
 	int prev_scantime;		/* scantime reported previously */
 
 	bool have_contact_count;
+  bool pressure_emulate;
+  __s32 fake_pressure;
+  int pressure_step;
 };
 
 struct mt_class {
@@ -168,11 +178,14 @@ struct mt_device {
 
 	struct list_head applications;
 	struct list_head reports;
+
+	struct notifier_block pm_notifier;
 };
 
 static void mt_post_parse_default_settings(struct mt_device *td,
 					   struct mt_application *app);
 static void mt_post_parse(struct mt_device *td, struct mt_application *app);
+static int cc_seen = 0;
 
 /* classes of device behavior */
 #define MT_CLS_DEFAULT				0x0001
@@ -207,6 +220,7 @@ static void mt_post_parse(struct mt_device *td, struct mt_application *app);
 #define MT_CLS_VTL				0x0110
 #define MT_CLS_GOOGLE				0x0111
 #define MT_CLS_RAZER_BLADE_STEALTH		0x0112
+#define MT_CLS_WIN_8_MS_SURFACE_TYPE_COVER	0x0114
 
 #define MT_DEFAULT_MAXCONTACT	10
 #define MT_MAX_MAXCONTACT	250
@@ -356,6 +370,16 @@ static const struct mt_class mt_classes[] = {
 			MT_QUIRK_HOVERING |
 			MT_QUIRK_CONTACT_CNT_ACCURATE |
 			MT_QUIRK_WIN8_PTP_BUTTONS,
+	},
+	{ .name = MT_CLS_WIN_8_MS_SURFACE_TYPE_COVER,
+		.quirks = MT_QUIRK_HAS_TYPE_COVER_BACKLIGHT |
+			MT_QUIRK_ALWAYS_VALID |
+			MT_QUIRK_IGNORE_DUPLICATES |
+			MT_QUIRK_HOVERING |
+			MT_QUIRK_CONTACT_CNT_ACCURATE |
+			MT_QUIRK_STICKY_FINGERS |
+			MT_QUIRK_WIN8_PTP_BUTTONS,
+		.export_all_inputs = true
 	},
 	{ }
 };
@@ -755,6 +779,15 @@ static int mt_touch_input_mapping(struct hid_device *hdev, struct hid_input *hi,
 						     MT_TOOL_PALM, 0, 0);
 
 			MT_STORE_FIELD(confidence_state);
+      if (app->application == HID_DG_TOUCHPAD &&
+         (cls->name == MT_CLS_DEFAULT || cls->name == MT_CLS_WIN_8) &&
+         !test_bit(ABS_MT_PRESSURE, hi->input->absbit)){
+         app->pressure_emulate = true;
+         app->fake_pressure = 0;
+         input_set_abs_params(hi->input, ABS_MT_PRESSURE, 0, 255, 0, 0);
+         mt_store_field(hdev, app, &app->fake_pressure, offsetof(struct mt_usages, p));
+         hid_dbg(hdev, "Set device pressure_emulate enable");
+       }
 			return 1;
 		case HID_DG_TIPSWITCH:
 			if (field->application != HID_GD_SYSTEM_MULTIAXIS)
@@ -799,8 +832,11 @@ static int mt_touch_input_mapping(struct hid_device *hdev, struct hid_input *hi,
 			app->scantime_logical_max = field->logical_maximum;
 			return 1;
 		case HID_DG_CONTACTCOUNT:
-			app->have_contact_count = true;
-			app->raw_cc = &field->value[usage->usage_index];
+      if(cc_seen != 1) {
+        app->have_contact_count = true;
+        app->raw_cc = &field->value[usage->usage_index];
+        cc_seen++;
+      }
 			return 1;
 		case HID_DG_AZIMUTH:
 			/*
@@ -1062,6 +1098,18 @@ static int mt_process_slot(struct mt_device *td, struct input_dev *input,
 			minor = minor >> 1;
 		}
 
+    hid_dbg(td->hdev, "emulate:%x,x:%d, pressure:%d",
+      app->pressure_emulate, *slot->x, *slot->p);
+  
+    if (app->pressure_emulate && slot->x) {
+        if (app->fake_pressure > 130)
+          app->pressure_step = -10;
+        else if (app->fake_pressure < 60)
+          app->pressure_step = 30;
+        else if (app->fake_pressure > 80)
+          app->pressure_step = 5;
+       app->fake_pressure += app->pressure_step;
+     }
 		input_event(input, EV_ABS, ABS_MT_POSITION_X, *slot->x);
 		input_event(input, EV_ABS, ABS_MT_POSITION_Y, *slot->y);
 		input_event(input, EV_ABS, ABS_MT_TOOL_X, *slot->cx);
@@ -1244,6 +1292,10 @@ static int mt_touch_input_configured(struct hid_device *hdev,
 	    (app->buttons_count == 1))
 		td->is_buttonpad = true;
 
+  if (app->application == HID_DG_TOUCHPAD) {
+    hid_dbg(hdev,"cls->name:0x%x",cls->name);
+  }
+
 	if (td->is_buttonpad)
 		__set_bit(INPUT_PROP_BUTTONPAD, input->propbit);
 
@@ -1290,9 +1342,11 @@ static int mt_input_mapping(struct hid_device *hdev, struct hid_input *hi,
 	    field->application != HID_DG_TOUCHSCREEN &&
 	    field->application != HID_DG_PEN &&
 	    field->application != HID_DG_TOUCHPAD &&
+      field->application != HID_GD_MOUSE &&
 	    field->application != HID_GD_KEYBOARD &&
 	    field->application != HID_GD_SYSTEM_CONTROL &&
 	    field->application != HID_CP_CONSUMER_CONTROL &&
+      field->logical != HID_DG_TOUCHSCREEN &&
 	    field->application != HID_GD_WIRELESS_RADIO_CTLS &&
 	    field->application != HID_GD_SYSTEM_MULTIAXIS &&
 	    !(field->application == HID_VD_ASUS_CUSTOM_MEDIA_KEYS &&
@@ -1337,6 +1391,13 @@ static int mt_input_mapped(struct hid_device *hdev, struct hid_input *hi,
 	struct mt_device *td = hid_get_drvdata(hdev);
 	struct mt_report_data *rdata;
 
+  if (field->application == HID_DG_TOUCHSCREEN ||
+      field->application == HID_DG_TOUCHPAD) {
+    if (usage->type == EV_KEY || usage->type == EV_ABS)
+      set_bit(usage->type, hi->input->evbit);
+ 
+    return -1;
+  }
 	rdata = mt_find_report_data(td, field->report);
 	if (rdata && rdata->is_mt_collection) {
 		/* We own these mappings, tell hid-input to ignore them */
@@ -1563,11 +1624,13 @@ static int mt_input_configured(struct hid_device *hdev, struct hid_input *hi)
 			break;
 		case HID_DG_TOUCHSCREEN:
 			/* we do not set suffix = "Touchscreen" */
+      suffix = "Touchscreen";
 			hi->input->name = hdev->name;
 			break;
 		case HID_DG_STYLUS:
 			/* force BTN_STYLUS to allow tablet matching in udev */
 			__set_bit(BTN_STYLUS, hi->input->keybit);
+      __set_bit(INPUT_PROP_DIRECT, hi->input->propbit);
 			break;
 		case HID_VD_ASUS_CUSTOM_MEDIA_KEYS:
 			suffix = "Custom Media Keys";
@@ -1663,6 +1726,69 @@ static void mt_expired_timeout(struct timer_list *t)
 	clear_bit(MT_IO_FLAGS_RUNNING, &td->mt_io_flags);
 }
 
+static void get_type_cover_backlight_field(struct hid_device *hdev,
+					   struct hid_field **field)
+{
+	struct hid_report_enum *rep_enum;
+	struct hid_report *rep;
+	struct hid_field *cur_field;
+	int i, j;
+
+	rep_enum = &hdev->report_enum[HID_FEATURE_REPORT];
+	list_for_each_entry(rep, &rep_enum->report_list, list) {
+		for (i = 0; i < rep->maxfield; i++) {
+			cur_field = rep->field[i];
+
+			for (j = 0; j < cur_field->maxusage; j++) {
+				if (cur_field->usage[j].hid
+				    == MS_TYPE_COVER_FEATURE_REPORT_USAGE) {
+					*field = cur_field;
+					return;
+				}
+			}
+		}
+	}
+}
+
+static void update_keyboard_backlight(struct hid_device *hdev, bool enabled)
+{
+	struct usb_device *udev = hid_to_usb_dev(hdev);
+	struct hid_field *field = NULL;
+
+	/* Wake up the device in case it's already suspended */
+	pm_runtime_get_sync(&udev->dev);
+
+	get_type_cover_backlight_field(hdev, &field);
+	if (!field) {
+		hid_err(hdev, "couldn't find backlight field\n");
+		goto out;
+	}
+
+	field->value[field->index] = enabled ? 0x01ff00ff : 0x00ff00ff;
+	hid_hw_request(hdev, field->report, HID_REQ_SET_REPORT);
+
+out:
+	pm_runtime_put_sync(&udev->dev);
+}
+
+static int mt_pm_notifier(struct notifier_block *notifier,
+			  unsigned long pm_event,
+			  void *unused)
+{
+	struct mt_device *td =
+		container_of(notifier, struct mt_device, pm_notifier);
+	struct hid_device *hdev = td->hdev;
+
+	if (td->mtclass.quirks & MT_QUIRK_HAS_TYPE_COVER_BACKLIGHT) {
+		if (pm_event == PM_SUSPEND_PREPARE)
+			update_keyboard_backlight(hdev, 0);
+		else if (pm_event == PM_POST_SUSPEND)
+			update_keyboard_backlight(hdev, 1);
+	}
+
+	return NOTIFY_DONE;
+}
+
 static int mt_probe(struct hid_device *hdev, const struct hid_device_id *id)
 {
 	int ret, i;
@@ -1684,7 +1810,11 @@ static int mt_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	td->hdev = hdev;
 	td->mtclass = *mtclass;
 	td->inputmode_value = MT_INPUTMODE_TOUCHSCREEN;
+  cc_seen = 0;
 	hid_set_drvdata(hdev, td);
+
+	td->pm_notifier.notifier_call = mt_pm_notifier;
+	register_pm_notifier(&td->pm_notifier);
 
 	INIT_LIST_HEAD(&td->applications);
 	INIT_LIST_HEAD(&td->reports);
@@ -1710,15 +1840,19 @@ static int mt_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	timer_setup(&td->release_timer, mt_expired_timeout, 0);
 
 	ret = hid_parse(hdev);
-	if (ret != 0)
+	if (ret != 0) {
+		unregister_pm_notifier(&td->pm_notifier);
 		return ret;
+	}
 
 	if (mtclass->quirks & MT_QUIRK_FIX_CONST_CONTACT_ID)
 		mt_fix_const_fields(hdev, HID_DG_CONTACTID);
 
 	ret = hid_hw_start(hdev, HID_CONNECT_DEFAULT);
-	if (ret)
+	if (ret) {
+		unregister_pm_notifier(&td->pm_notifier);
 		return ret;
+	}
 
 	ret = sysfs_create_group(&hdev->dev.kobj, &mt_attribute_group);
 	if (ret)
@@ -1754,6 +1888,7 @@ static void mt_remove(struct hid_device *hdev)
 {
 	struct mt_device *td = hid_get_drvdata(hdev);
 
+	unregister_pm_notifier(&td->pm_notifier);
 	del_timer_sync(&td->release_timer);
 
 	sysfs_remove_group(&hdev->dev.kobj, &mt_attribute_group);
@@ -1979,6 +2114,63 @@ static const struct hid_device_id mt_devices[] = {
 		HID_DEVICE(BUS_I2C, HID_GROUP_GENERIC,
 			USB_VENDOR_ID_LG, I2C_DEVICE_ID_LG_7010) },
 
+ /* Microsoft Touch Cover */
+ { .driver_data = MT_CLS_EXPORT_ALL_INPUTS,
+   MT_USB_DEVICE(USB_VENDOR_ID_MICROSOFT,
+   USB_DEVICE_ID_MS_TOUCH_COVER_2) },
+
+ /* Microsoft Type Cover */
+ { .driver_data = MT_CLS_EXPORT_ALL_INPUTS,
+   MT_USB_DEVICE(USB_VENDOR_ID_MICROSOFT,
+     USB_DEVICE_ID_MS_TYPE_COVER_2) },
+ { .driver_data = MT_CLS_EXPORT_ALL_INPUTS,
+   MT_USB_DEVICE(USB_VENDOR_ID_MICROSOFT,
+     USB_DEVICE_ID_MS_TYPE_COVER_3) },
+ { .driver_data = MT_CLS_EXPORT_ALL_INPUTS,
+   MT_USB_DEVICE(USB_VENDOR_ID_MICROSOFT,
+     USB_DEVICE_ID_MS_TYPE_COVER_PRO_3) },
+ { .driver_data = MT_CLS_EXPORT_ALL_INPUTS,
+   MT_USB_DEVICE(USB_VENDOR_ID_MICROSOFT,
+     USB_DEVICE_ID_MS_TYPE_COVER_PRO_3_1) },
+ { .driver_data = MT_CLS_EXPORT_ALL_INPUTS,
+   MT_USB_DEVICE(USB_VENDOR_ID_MICROSOFT,
+     USB_DEVICE_ID_MS_TYPE_COVER_PRO_3_2) },
+ { .driver_data = MT_CLS_EXPORT_ALL_INPUTS,
+   MT_USB_DEVICE(USB_VENDOR_ID_MICROSOFT,
+     USB_DEVICE_ID_MS_TYPE_COVER_PRO_3_JP) },
+ { .driver_data = MT_CLS_EXPORT_ALL_INPUTS,
+   MT_USB_DEVICE(USB_VENDOR_ID_MICROSOFT,
+     USB_DEVICE_ID_MS_TYPE_COVER_PRO_4) },
+ { .driver_data = MT_CLS_EXPORT_ALL_INPUTS,
+   MT_USB_DEVICE(USB_VENDOR_ID_MICROSOFT,
+     USB_DEVICE_ID_MS_TYPE_COVER_PRO_4_1) },
+
+ /* Microsoft Surface Book */
+ { .driver_data = MT_CLS_EXPORT_ALL_INPUTS,
+   MT_USB_DEVICE(USB_VENDOR_ID_MICROSOFT,
+   USB_DEVICE_ID_MS_SURFACE_BOOK) },
+
+ /* Microsoft Surface Book 2 */
+ { .driver_data = MT_CLS_EXPORT_ALL_INPUTS,
+   MT_USB_DEVICE(USB_VENDOR_ID_MICROSOFT,
+   USB_DEVICE_ID_MS_SURFACE_BOOK_2) },
+
+ /* Microsoft Surface Go */
+ { .driver_data = MT_CLS_EXPORT_ALL_INPUTS,
+   MT_USB_DEVICE(USB_VENDOR_ID_MICROSOFT,
+   USB_DEVICE_ID_MS_SURFACE_GO) },
+
+ /* Microsoft Surface Laptop */
+ { .driver_data = MT_CLS_EXPORT_ALL_INPUTS,
+   HID_DEVICE(HID_BUS_ANY, HID_GROUP_ANY,
+     USB_VENDOR_ID_MICROSOFT,
+     USB_DEVICE_ID_MS_SURFACE_VHF) },
+
+ /* Microsoft Power Cover */
+ { .driver_data = MT_CLS_EXPORT_ALL_INPUTS,
+   MT_USB_DEVICE(USB_VENDOR_ID_MICROSOFT,
+   USB_DEVICE_ID_MS_POWER_COVER) },
+
 	/* MosArt panels */
 	{ .driver_data = MT_CLS_CONFIDENCE_MINUS_ONE,
 		MT_USB_DEVICE(USB_VENDOR_ID_ASUS,
@@ -2100,6 +2292,11 @@ static const struct hid_device_id mt_devices[] = {
 	{ .driver_data = MT_CLS_NSMU,
 		MT_USB_DEVICE(USB_VENDOR_ID_XIROKU,
 			USB_DEVICE_ID_XIROKU_CSR2) },
+
+	/* Microsoft Surface type cover */
+	{ .driver_data = MT_CLS_WIN_8_MS_SURFACE_TYPE_COVER,
+		HID_DEVICE(HID_BUS_ANY, HID_GROUP_ANY,
+			USB_VENDOR_ID_MICROSOFT, 0x09c0) },
 
 	/* Google MT devices */
 	{ .driver_data = MT_CLS_GOOGLE,
